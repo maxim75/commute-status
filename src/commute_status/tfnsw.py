@@ -138,21 +138,6 @@ async def plan(
     return _journeys(await call(s, "plan_trip", args))
 
 
-async def plan_from(s: ClientSession, origin: LatLon, destination_id: str, n: int = 5) -> list[Journey]:
-    data = await call(
-        s,
-        "plan_trip_from_coordinate",
-        {
-            "latitude": origin[0],
-            "longitude": origin[1],
-            "destination_id": destination_id,
-            "detail": "answer",
-            "max_results": n,
-        },
-    )
-    return _journeys(data)
-
-
 async def train_positions(s: ClientSession) -> list[dict]:
     data = await call(s, "get_vehicle_positions", {"mode": "sydneytrains", "max_results": 5000})
     return data.get("vehicles", [])

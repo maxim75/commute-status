@@ -1,10 +1,7 @@
 """The menu bar app: wait mode and travelling mode.
 
-Wait mode (the default) shows minutes until the next train. What it counts
-down to depends on the Home Assistant zone:
-  * at home, or location unknown -> trains from the station towards Town Hall
-  * in another zone              -> next trip from that zone back to the station
-  * anywhere else                -> no countdown
+Wait mode (the default) shows minutes until the next train from the station
+towards the destination (Engadine -> Town Hall unless configured otherwise).
 
 Click a departure in the dropdown to pick that train. Until it leaves, the
 countdown follows it; once it departs the app switches to travelling mode:
@@ -21,7 +18,7 @@ from datetime import datetime, timedelta
 
 import rumps
 
-from . import config, hass, tfnsw, travel
+from . import config, tfnsw, travel
 from .config import SYDNEY, short
 
 END_AFTER_ARRIVAL = timedelta(minutes=2)
@@ -32,15 +29,13 @@ class Row:
     time: datetime  # when to leave
     label: str
     live: bool = True
-    departure: tfnsw.Departure | None = None  # set when the row can be picked
+    departure: tfnsw.Departure | None = None  # the train this row is, for picking
 
 
 @dataclass
 class Board:
-    icon: str  # menu bar prefix: 🚆 to town, 🏠 heading home
     heading: str
     rows: list[Row] = field(default_factory=list)
-    countdown: bool = True  # False = away, show no timer
 
 
 def _minutes(delta: timedelta) -> int:
@@ -78,13 +73,7 @@ class CommuteApp(rumps.App):
             if trip:
                 asyncio.run(self._fetch_trip(trip))
             else:
-                zone, lat, lon = "home", None, None
-                if hass.enabled():
-                    try:
-                        zone, lat, lon = hass.location()
-                    except Exception as exc:  # fall back to the home view
-                        errors.append(f"Home Assistant: {exc or type(exc).__name__}")
-                board = asyncio.run(self._fetch_board(zone, lat, lon))
+                board = asyncio.run(self._fetch_board())
                 with self._lock:
                     self.board = board
         except Exception as exc:  # show it in the menu rather than crash
@@ -104,31 +93,14 @@ class CommuteApp(rumps.App):
             self.dest_stop_id, _ = await tfnsw.find_stop(s, config.TOWARDS)
         return self.dest_stop_id
 
-    async def _fetch_board(self, zone: str, lat: float | None, lon: float | None) -> Board:
+    async def _fetch_board(self) -> Board:
         async with tfnsw.session() as s:
-            stop_id = await self._home_stop(s)
-
-            if zone == "home" or zone in hass.NO_LOCATION:
-                deps = await tfnsw.departures_towards(s, stop_id)
-                heading = f"{short(config.STATION)} → {config.TOWARDS}"
-                if zone in hass.NO_LOCATION:
-                    heading += "  (location unknown)"
-                rows = [
-                    Row(d.time, f"{d.line} → {d.destination}" if d.destination else d.line, d.live, d)
-                    for d in deps
-                ]
-                return Board("🚆", heading, rows)
-
-            if lat is not None and lon is not None:
-                rows = []
-                for j in await tfnsw.plan_from(s, (lat, lon), stop_id):
-                    label = f"arrive {j.arrival:%H:%M}"
-                    if j.changes:
-                        label += f", {j.changes} change{'s' if j.changes > 1 else ''}"
-                    rows.append(Row(j.departure, label))
-                return Board("🏠", f"{zone} → {short(config.STATION)}", sorted(rows, key=lambda r: r.time))
-
-            return Board("🚆", f"Away ({zone.replace('_', ' ')})", countdown=False)
+            deps = await tfnsw.departures_towards(s, await self._home_stop(s))
+        rows = [
+            Row(d.time, f"{d.line} → {d.destination}" if d.destination else d.line, d.live, d)
+            for d in deps
+        ]
+        return Board(f"{short(config.STATION)} → {config.TOWARDS}", rows)
 
     async def _fetch_trip(self, trip: travel.Trip) -> None:
         async with tfnsw.session() as s:
@@ -205,30 +177,24 @@ class CommuteApp(rumps.App):
 
     def _wait_items(self, board: Board | None, errors: list[str], now: datetime) -> list[rumps.MenuItem]:
         upcoming = [r for r in board.rows if r.time >= now] if board else []
-        if board and not board.countdown:
-            self.title = f"{board.icon} –"
-        elif upcoming:
+        if upcoming:
             mins = _minutes(upcoming[0].time - now)
-            self.title = f"{board.icon} now" if mins == 0 else f"{board.icon} {mins} min"
+            self.title = "🚆 now" if mins == 0 else f"🚆 {mins} min"
         elif errors:
             self.title = "🚆 ⚠︎"
         else:
-            self.title = f"{board.icon if board else '🚆'} …"
+            self.title = "🚆 …"
 
         if not board:
             return [rumps.MenuItem("Loading…")]
         items = [rumps.MenuItem(board.heading)]
         for r in upcoming[:6]:
             text = f"{r.time:%H:%M}  {r.label}{'' if r.live else '  (scheduled)'}"
-            if r.departure:
-                dep = r.departure
-                items.append(rumps.MenuItem(text, callback=lambda _, d=dep: self.pick(d)))
-            else:
-                items.append(rumps.MenuItem(text))
-        if board.countdown and not upcoming:
-            items.append(rumps.MenuItem("No departures"))
-        if any(r.departure for r in upcoming):
+            items.append(rumps.MenuItem(text, callback=lambda _, d=r.departure: self.pick(d)))
+        if upcoming:
             items.append(rumps.MenuItem("Click a train to follow it"))
+        else:
+            items.append(rumps.MenuItem("No departures"))
         return items
 
     def _trip_items(self, trip: travel.Trip, now: datetime) -> list[rumps.MenuItem]:

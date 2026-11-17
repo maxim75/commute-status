@@ -18,16 +18,6 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default `Eng
 `COMMUTE_STOP_ID` (skip name lookup), `COMMUTE_TOWARDS` (default `Town Hall`),
 `TFNSW_MCP_URL`.
 
-### Home Assistant location
-
-Set `HASS_URL` and `HASS_TOKEN` (a long-lived access token) and the app picks
-what to show from the zone your `person` entity is in:
-
-- `home`: next train from Engadine towards Town Hall (🚆)
-- another zone, e.g. `Work`: next trip from that zone back to Engadine (🏠)
-- anywhere else: no countdown (🚆 –)
-
-`HASS_PERSON` picks the person entity; it defaults to the first one.
 
 ### Wait and travelling modes
 
@@ -44,7 +34,7 @@ what to show from the zone your `person` entity is in:
 - It returns to wait mode two minutes after arrival, or via **Stop travelling**.
 
 Code layout: `app.py` (menu bar), `tfnsw.py` (MCP calls), `travel.py`
-(following a train), `hass.py` (Home Assistant zone), `config.py` (settings).
+(following a train), `config.py` (settings).
 
 ### Running with uvx or as an installed tool
 
