@@ -45,3 +45,17 @@ what to show from the zone your `person` entity is in:
 
 Code layout: `app.py` (menu bar), `tfnsw.py` (MCP calls), `travel.py`
 (following a train), `hass.py` (Home Assistant zone), `config.py` (settings).
+
+### Running with uvx or as an installed tool
+
+```bash
+uvx --from /Users/maksym/code/commute-status commute-status
+```
+
+or `uv tool install /Users/maksym/code/commute-status`, then `commute-status`.
+Run that way, the code lives in uv's cache, so put your settings in
+`~/.config/commute-status/.env` (or `$XDG_CONFIG_HOME/commute-status/.env`).
+Settings are read in this order, first wins: environment variables, `.env` in
+the current folder, `.env` in the project folder, `~/.config/commute-status/.env`.
+uvx rebuilds automatically when files under `src/` change (see `cache-keys` in
+`pyproject.toml`).

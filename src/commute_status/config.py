@@ -8,10 +8,21 @@ from zoneinfo import ZoneInfo
 
 from dotenv import find_dotenv, load_dotenv
 
-# .env from the current directory (or a parent), then the project root.
-# Real environment variables win over both.
+def _user_config_dir() -> Path:
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "commute-status"
+
+
+# Settings come from, highest priority first (load_dotenv never overrides):
+#   1. real environment variables
+#   2. .env in the current directory or a parent
+#   3. .env in the project root (when run from a checkout, e.g. `uv run`)
+#   4. ~/.config/commute-status/.env (works for uvx / `uv tool install`, whose
+#      code lives in uv's cache where 3 can't find anything)
 load_dotenv(find_dotenv(usecwd=True))
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+USER_ENV = _user_config_dir() / ".env"
+load_dotenv(USER_ENV)
 
 
 def _hass_base_url(url: str) -> str:
