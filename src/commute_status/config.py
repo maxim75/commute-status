@@ -31,6 +31,8 @@ STATION = os.environ.get("COMMUTE_STATION", "Engadine Station")
 STOP_ID = os.environ.get("COMMUTE_STOP_ID")  # skip the name lookup if set
 TOWARDS = os.environ.get("COMMUTE_TOWARDS", "Town Hall")  # only trains calling here later
 
+TITLE_STYLE = os.environ.get("COMMUTE_TITLE", "auto")  # auto | full | compact | minimal
+
 WAIT_FETCH_EVERY = 60  # seconds between server calls while waiting
 TRAVEL_FETCH_EVERY = 30  # ... and while on a train
 SYDNEY = ZoneInfo("Australia/Sydney")

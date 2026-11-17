@@ -49,3 +49,13 @@ Settings are read in this order, first wins: environment variables, `.env` in
 the current folder, `.env` in the project folder, `~/.config/commute-status/.env`.
 uvx rebuilds automatically when files under `src/` change (see `cache-keys` in
 `pyproject.toml`).
+
+### Crowded menu bar
+
+When the menu bar is full, macOS hides new items behind the notch without
+saying so. The app checks where its item ended up: while hidden it switches to
+shorter titles (`🚆 7 min` → `🚆 7m` → `7m`), and if even that doesn't fit it
+shows a notification once. To make room, hold ⌘ and drag other icons out of the
+menu bar, or ⌘-drag the 🚆 item further right; that position is remembered
+across restarts. Set `COMMUTE_TITLE=full|compact|minimal` to fix the title
+length instead of letting it adjust (default `auto`).

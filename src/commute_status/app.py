@@ -12,16 +12,27 @@ couple of minutes after arrival, or when you choose "Stop travelling".
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import rumps
+from AppKit import NSScreen
 
 from . import config, tfnsw, travel
 from .config import SYDNEY, short
 
 END_AFTER_ARRIVAL = timedelta(minutes=2)
+TITLE_LEVELS = {"full": 0, "compact": 1, "minimal": 2}  # COMMUTE_TITLE; anything else = auto
+AUTOSAVE_NAME = "commute-status"  # macOS remembers a ⌘-dragged position under this name
+
+
+def _notify(title: str, message: str) -> None:
+    # rumps.notification needs a bundled app; osascript works from plain Python.
+    script = f"display notification {json.dumps(message)} with title {json.dumps(title)}"
+    subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
 
 
 @dataclass
@@ -55,6 +66,11 @@ class CommuteApp(rumps.App):
         self._lock = threading.Lock()
         self._fetching = False
         self.menu = [rumps.MenuItem("Refresh now", callback=lambda _: self.fetch_now()), None]
+        style = config.TITLE_STYLE
+        self._auto_title = style not in TITLE_LEVELS
+        self._level = TITLE_LEVELS.get(style, 0)
+        self._hidden_streak = 0
+        self._hidden_notified = False
 
     # --- fetching (background thread) -------------------------------------
 
@@ -159,8 +175,57 @@ class CommuteApp(rumps.App):
         if datetime.now(SYDNEY) - self.last_fetch >= timedelta(seconds=every):
             self.fetch_now()
 
+    # --- staying visible in a crowded menu bar -----------------------------
+    #
+    # When the menu bar is full, macOS puts new items behind the notch, where
+    # nobody can see or click them, without saying so. The app checks where its
+    # item ended up, steps down to shorter titles while it is hidden, and if
+    # even the shortest one doesn't fit, says so once in a notification.
+
+    def _set_title(self, full: str, compact: str, minimal: str) -> None:
+        self.title = (full, compact, minimal)[self._level]
+
+    def _countdown(self, mins: int) -> None:
+        if mins == 0:
+            self._set_title("🚆 now", "🚆 now", "now")
+        else:
+            self._set_title(f"🚆 {mins} min", f"🚆 {mins}m", f"{mins}m")
+
+    def _item_hidden(self) -> bool:
+        """True if the status item is behind the notch or not placed at all."""
+        try:
+            win = self._nsapp.nsstatusitem.button().window()
+        except AttributeError:  # not created yet
+            return False
+        if win is None:
+            return False
+        frame = win.frame()
+        if frame.size.height == 0:
+            return True
+        screen = win.screen() or NSScreen.mainScreen()
+        right = screen.auxiliaryTopRightArea() if hasattr(screen, "auxiliaryTopRightArea") else None
+        # Displays without a notch report an empty area; nothing to hide behind.
+        return bool(right and right.size.width > 0 and frame.origin.x < right.origin.x - 1)
+
+    def _check_visible(self) -> None:
+        self._hidden_streak = self._hidden_streak + 1 if self._item_hidden() else 0
+        if self._hidden_streak < 2:  # one bad reading can be a relayout in progress
+            return
+        self._hidden_streak = 0
+        if self._auto_title and self._level < 2:
+            self._level += 1
+        elif not self._hidden_notified:
+            self._hidden_notified = True
+            _notify(
+                "Commute status is hidden behind the notch",
+                "The menu bar is full. Hold ⌘ and drag other icons out of the menu bar, "
+                "or drag the 🚆 item to the right; its spot is remembered.",
+            )
+
     @rumps.timer(5)
     def redraw(self, _) -> None:
+        if _ is not None:  # timer tick, not a redraw after a click
+            self._check_visible()
         now = datetime.now(SYDNEY)
         with self._lock:
             trip, board, errors = self.trip, self.board, list(self.errors)
@@ -178,12 +243,11 @@ class CommuteApp(rumps.App):
     def _wait_items(self, board: Board | None, errors: list[str], now: datetime) -> list[rumps.MenuItem]:
         upcoming = [r for r in board.rows if r.time >= now] if board else []
         if upcoming:
-            mins = _minutes(upcoming[0].time - now)
-            self.title = "🚆 now" if mins == 0 else f"🚆 {mins} min"
+            self._countdown(_minutes(upcoming[0].time - now))
         elif errors:
-            self.title = "🚆 ⚠︎"
+            self._set_title("🚆 ⚠︎", "🚆 ⚠︎", "⚠︎")
         else:
-            self.title = "🚆 …"
+            self._set_title("🚆 …", "🚆 …", "…")
 
         if not board:
             return [rumps.MenuItem("Loading…")]
@@ -204,18 +268,21 @@ class CommuteApp(rumps.App):
 
         if not trip.departed(now):
             mins = _minutes(trip.departure - now)
-            self.title = "🚆 now" if mins == 0 else f"🚆 {mins} min"
+            self._countdown(mins)
             items.append(rumps.MenuItem(f"Your train: {trip.departure:%H:%M} {trip.line}{live}"))
             if trip.planned:
                 items.append(rumps.MenuItem(f"Arrives {dest} {trip.arrival:%H:%M}"))
         elif trip.arrived(now):
-            self.title = f"🚆 {short(dest)}"
+            self._set_title(f"🚆 {short(dest)}", "🚆 ✓", "✓")
             items.append(rumps.MenuItem(f"Arrived at {dest}"))
         else:
             mins = _minutes(trip.arrival - now)
             kind, station = trip.where()
-            place = f" · {kind} {station}" if station else ""
-            self.title = f"🚆 {mins} min{place}"
+            self._set_title(
+                f"🚆 {mins} min · {kind} {station}" if station else f"🚆 {mins} min",
+                f"🚆 {mins}m · {station}" if station else f"🚆 {mins}m",
+                f"{mins}m",
+            )
             items.append(rumps.MenuItem(f"{trip.line} to {dest}: arrive {trip.arrival:%H:%M}{live}"))
             if trip.between() and kind == "next":
                 items.append(rumps.MenuItem(f"Between {trip.between()}"))
@@ -235,5 +302,12 @@ class CommuteApp(rumps.App):
 
 def run() -> None:
     app = CommuteApp()
+
+    # Runs right after rumps creates the status item, before the first layout,
+    # so a position the user ⌘-dragged it to last time is restored.
+    @rumps.events.before_start.register
+    def _remember_position() -> None:
+        app._nsapp.nsstatusitem.setAutosaveName_(AUTOSAVE_NAME)
+
     app.fetch_now()
     app.run()
