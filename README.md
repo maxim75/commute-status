@@ -28,3 +28,20 @@ what to show from the zone your `person` entity is in:
 - anywhere else: no countdown (🚆 –)
 
 `HASS_PERSON` picks the person entity; it defaults to the first one.
+
+### Wait and travelling modes
+
+- **Wait mode** (default): `🚆 11 min` counts down to the next train. The
+  dropdown lists the next departures.
+- **Pick a train**: click a departure in the dropdown. Until it leaves, the
+  countdown follows that train.
+- **Travelling mode** (from departure): `🚆 23 min · next Sutherland` shows
+  minutes to the destination and the next station (or `at Sutherland` while
+  stopped). Position comes from the train's GPS in the Sydney Trains feed,
+  falling back to a timetable estimate; the arrival time is live from the trip
+  planner. The dropdown adds the arrival time, where the train is and the
+  stops ahead.
+- It returns to wait mode two minutes after arrival, or via **Stop travelling**.
+
+Code layout: `app.py` (menu bar), `tfnsw.py` (MCP calls), `travel.py`
+(following a train), `hass.py` (Home Assistant zone), `config.py` (settings).
