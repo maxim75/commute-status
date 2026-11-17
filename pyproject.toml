@@ -1,0 +1,21 @@
+[project]
+name = "commute-status"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Maksym Kozlenko", email = "max@kozlenko.info" }
+]
+requires-python = ">=3.15"
+dependencies = [
+    "mcp>=2.3.0",
+    "python-dotenv>=1.2.4",
+    "rumps>=0.4.0",
+]
+
+[project.scripts]
+commute-status = "commute_status:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
