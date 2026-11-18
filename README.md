@@ -14,19 +14,23 @@ Then run:
 uv run commute-status
 ```
 
-Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default `Engadine Station`),
-`COMMUTE_STOP_ID` (skip name lookup), `COMMUTE_TOWARDS` (default `Town Hall`),
-`TFNSW_MCP_URL`.
+Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
+`Engadine Station`), `COMMUTE_TOWARDS` (default `Town Hall`),
+`COMMUTE_RETURN_AFTER` (default `14:00`), `TFNSW_MCP_URL`.
 
 
 ### Wait and travelling modes
 
+- **Direction by time of day:** Engadine → Town Hall until 14:00, then
+  Town Hall → Engadine until midnight (`COMMUTE_RETURN_AFTER`, empty to
+  disable). A train you are following keeps its direction across the switch.
 - **Wait mode** (default): `🚆 11 min` counts down to the next train. The
   dropdown lists trains that already left but haven't reached Town Hall yet
   (with their arrival time), then the next departures, each with where the
   train is now (`at Heathcote`, `→ Sydenham`) from the Sydney Trains GPS feed.
-  The line is mapped once from `COMMUTE_LINE_START` (default Waterfall) to the
-  destination and cached in `~/.cache/commute-status/line.json`.
+  The line is mapped once per direction, from `COMMUTE_LINE_START` (default
+  Waterfall) or `COMMUTE_RETURN_LINE_START` (default Bondi Junction) to the
+  destination, and cached in `~/.cache/commute-status/line.json`.
 - **Pick a train**: click a departure in the dropdown. Until it leaves, the
   countdown follows that train.
 - **Travelling mode** (from departure): `🚆 23 min · next Sutherland` shows

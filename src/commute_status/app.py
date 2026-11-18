@@ -1,7 +1,8 @@
 """The menu bar app: wait mode and travelling mode.
 
 Wait mode (the default) shows minutes until the next train from the station
-towards the destination (Engadine -> Town Hall unless configured otherwise).
+towards the destination: Engadine -> Town Hall in the morning, and the other
+way round from COMMUTE_RETURN_AFTER (14:00) until midnight.
 
 Click a departure in the dropdown to pick that train. Until it leaves, the
 countdown follows it; once it departs the app switches to travelling mode:
@@ -48,7 +49,7 @@ class Row:
 
 @dataclass
 class Board:
-    heading: str
+    direction: config.Direction
     rows: list[Row] = field(default_factory=list)  # still to leave the home station
     departed: list[Row] = field(default_factory=list)  # left, not yet at the destination
     warnings: list[str] = field(default_factory=list)
@@ -80,10 +81,9 @@ def _minutes(delta: timedelta) -> int:
 class CommuteApp(rumps.App):
     def __init__(self) -> None:
         super().__init__("Commute", title="🚆 …", quit_button="Quit")
-        self.home_stop_id: str | None = config.STOP_ID
-        self.dest_stop_id: str | None = None
+        self.stop_ids: dict[str, str] = {}  # station name -> stop ID
         self.coords: dict[str, tfnsw.LatLon | None] = {}  # station short name -> coords
-        self.line: line.Line | None = None  # mapped once, for train positions
+        self.lines: dict[str, line.Line] = {}  # Direction.key -> mapped line, for positions
         self.board: Board | None = None
         self.trip: travel.Trip | None = None
         self.errors: list[str] = []
@@ -122,30 +122,25 @@ class CommuteApp(rumps.App):
                 self.errors = errors
             self._fetching = False
 
-    async def _home_stop(self, s) -> str:
-        if not self.home_stop_id:
-            self.home_stop_id, _ = await tfnsw.find_stop(s, config.STATION)
-        return self.home_stop_id
-
-    async def _dest_stop(self, s) -> str:
-        if not self.dest_stop_id:
-            self.dest_stop_id, _ = await tfnsw.find_stop(s, config.TOWARDS)
-        return self.dest_stop_id
+    async def _stop_id(self, s, name: str) -> str:
+        if name not in self.stop_ids:
+            self.stop_ids[name], _ = await tfnsw.find_stop(s, name)
+        return self.stop_ids[name]
 
     async def _fetch_board(self) -> None:
         """Publish the list as soon as it is known, then again with positions."""
         now = datetime.now(SYDNEY)
+        direction = config.direction_at(now)
         warnings: list[str] = []
         async with tfnsw.session() as s:
-            home, dest = await asyncio.gather(self._home_stop(s), self._dest_stop(s))
-            # Trains that already left but haven't arrived: plan from the past.
-            back = now - timedelta(minutes=config.DEPARTED_WINDOW_MIN)
-            positions = asyncio.ensure_future(self._positions_inputs(s, home, dest))
-            deps, planned = await asyncio.gather(
-                tfnsw.departures_towards(s, home), tfnsw.plan(s, home, dest, when=back, n=8)
+            home, dest = await asyncio.gather(
+                self._stop_id(s, direction.station), self._stop_id(s, direction.towards)
             )
-            past = [j for j in planned if j.changes == 0 and j.departure < now < j.arrival]
-            board = self._board(deps, past)
+            positions = asyncio.ensure_future(self._positions_inputs(s, direction, home, dest))
+            # From an hour back, to include trains that left but haven't arrived.
+            back = now - timedelta(minutes=config.DEPARTED_WINDOW_MIN)
+            trains = await tfnsw.direct_trains(s, home, dest, back, config.UPCOMING_COUNT, now)
+            board = self._board(direction, trains, now)
             with self._lock:
                 old, self.board = self.board, board
             # Until fresh positions arrive, keep the ones each train had before.
@@ -156,48 +151,49 @@ class CommuteApp(rumps.App):
                 warnings.append(f"Train positions: {exc or type(exc).__name__}")
                 vehicles = []
 
-        board = self._board(deps, past, warnings)
-        if self.line and vehicles:
+        board = self._board(direction, trains, now, warnings)
+        if direction.key in self.lines and vehicles:
             self._place(board, vehicles, datetime.now(SYDNEY))
         with self._lock:
             self.board = board
 
-    async def _positions_inputs(self, s, home: str, dest: str) -> list[dict]:
-        if self.line is None:
-            self.line = line.load_cached(home, dest)
-        if self.line is None:
-            self.line = await line.build(s, home, dest, self.coords)
-            line.save_cached(self.line, home, dest)
+    async def _positions_inputs(self, s, direction: config.Direction, home: str, dest: str) -> list[dict]:
+        if direction.key not in self.lines:
+            mapped = line.load_cached(direction.key)
+            if mapped is None:
+                mapped = await line.build(s, home, dest, direction.line_start, self.coords)
+                line.save_cached(mapped, direction.key)
+            self.lines[direction.key] = mapped
         return await tfnsw.train_positions(s)
 
-    def _board(self, deps: list[tfnsw.Departure], past: list[tfnsw.Journey], warnings=()) -> Board:
-        rows = [
-            Row(d.time, f"{d.line} → {d.destination}" if d.destination else d.line, d.live, d)
-            for d in deps
-        ]
-        departed = []
-        for j in sorted(past, key=lambda j: j.departure):
+    def _board(self, direction: config.Direction, trains: list[tfnsw.Journey], now: datetime, warnings=()) -> Board:
+        rows, departed = [], []
+        for j in trains:
             name = _line_name(j.route)
             dep = tfnsw.Departure(j.departure, j.route, name, j.towards, j.live)
-            departed.append(Row(j.departure, name, j.live, dep, arrival=j.arrival))
-        return Board(f"{short(config.STATION)} → {config.TOWARDS}", rows, departed, list(warnings))
+            if j.departure >= now:
+                rows.append(Row(j.departure, f"{name} → {j.towards}" if j.towards else name, j.live, dep))
+            elif now < j.arrival:
+                departed.append(Row(j.departure, name, j.live, dep, arrival=j.arrival))
+        return Board(direction, rows[: config.UPCOMING_COUNT], departed, list(warnings))
 
     def _place(self, board: Board, vehicles: list[dict], now: datetime) -> None:
+        mapped = self.lines[board.direction.key]
         trains = board.departed + board.rows
         guesses = [
-            (r.departure.route, self.line.guess_departed(r.time, r.arrival, now))
+            (r.departure.route, mapped.guess_departed(r.time, r.arrival, now))
             if r.arrival
-            else (r.departure.route, self.line.guess_upcoming((r.time - now).total_seconds() / 60))
+            else (r.departure.route, mapped.guess_upcoming((r.time - now).total_seconds() / 60))
             for r in trains
         ]
-        found = line.match(self.line, guesses, vehicles, now)
+        found = line.match(mapped, guesses, vehicles, now, board.direction.feed_direction)
         for i, r in enumerate(trains):
             if i in found:
-                r.position = self.line.describe(*found[i])
+                r.position = mapped.describe(*found[i])
 
     async def _fetch_trip(self, trip: travel.Trip) -> None:
         async with tfnsw.session() as s:
-            origin, dest = await self._home_stop(s), await self._dest_stop(s)
+            origin, dest = await asyncio.gather(self._stop_id(s, trip.origin), self._stop_id(s, trip.dest))
             journeys = await tfnsw.plan(s, origin, dest, when=trip.picked - timedelta(minutes=2), n=4)
             journey = travel.best_journey(trip, journeys)
             stops = journey.stops if journey else trip.stops
@@ -221,7 +217,7 @@ class CommuteApp(rumps.App):
 
     # --- user actions -----------------------------------------------------
 
-    def pick(self, dep: tfnsw.Departure) -> None:
+    def pick(self, dep: tfnsw.Departure, direction: config.Direction) -> None:
         trip = travel.Trip(
             route=dep.route,
             line=dep.line,
@@ -230,6 +226,9 @@ class CommuteApp(rumps.App):
             arrival=dep.time + timedelta(hours=1),  # until the planner answers
             live=dep.live,
             stops=[],
+            origin=direction.station,
+            dest=direction.towards,
+            feed_direction=direction.feed_direction,
         )
         with self._lock:
             self.trip = trip
@@ -248,8 +247,11 @@ class CommuteApp(rumps.App):
 
     @rumps.timer(10)
     def tick(self, _) -> None:
+        now = datetime.now(SYDNEY)
         every = config.TRAVEL_FETCH_EVERY if self.trip else config.WAIT_FETCH_EVERY
-        if datetime.now(SYDNEY) - self.last_fetch >= timedelta(seconds=every):
+        board = self.board
+        switched = not self.trip and board is not None and board.direction != config.direction_at(now)
+        if switched or now - self.last_fetch >= timedelta(seconds=every):
             self.fetch_now()
 
     # --- staying visible in a crowded menu bar -----------------------------
@@ -329,17 +331,19 @@ class CommuteApp(rumps.App):
         if not board:
             return [rumps.MenuItem("Loading…")]
 
-        def item(text: str, r: Row) -> rumps.MenuItem:
-            return rumps.MenuItem(text, callback=lambda _, d=r.departure: self.pick(d))
+        d = board.direction
 
-        items = [rumps.MenuItem(board.heading)]
+        def item(text: str, r: Row) -> rumps.MenuItem:
+            return rumps.MenuItem(text, callback=lambda _, dep=r.departure: self.pick(dep, d))
+
+        items = [rumps.MenuItem(d.heading)]
         on_the_way = [r for r in board.departed if r.arrival and r.arrival > now]
         if on_the_way:
             items.append(rumps.MenuItem("Already left:"))
             for r in on_the_way:
                 where = f" · {r.position}" if r.position else ""
-                items.append(item(f"{r.time:%H:%M}  {r.label}{where} · {short(config.TOWARDS)} {r.arrival:%H:%M}", r))
-            items.append(rumps.MenuItem("Next from " + short(config.STATION) + ":"))
+                items.append(item(f"{r.time:%H:%M}  {r.label}{where} · {short(d.towards)} {r.arrival:%H:%M}", r))
+            items.append(rumps.MenuItem("Next from " + short(d.station) + ":"))
         for r in upcoming[:6]:
             where = f" · {r.position}" if r.position else ""
             items.append(item(f"{r.time:%H:%M}  {r.label}{'' if r.live else ' (scheduled)'}{where}", r))
@@ -351,7 +355,7 @@ class CommuteApp(rumps.App):
         return items
 
     def _trip_items(self, trip: travel.Trip, now: datetime) -> list[rumps.MenuItem]:
-        dest = trip.destination or config.TOWARDS
+        dest = trip.destination or short(trip.dest)
         live = "" if trip.live else "  (scheduled)"
         items: list[rumps.MenuItem] = []
 

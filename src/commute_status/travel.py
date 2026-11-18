@@ -22,20 +22,21 @@ GPS_STALE = timedelta(minutes=3)
 AT_STATION_M = 250  # within this of a station counts as "at" it
 
 # Route-name prefix -> GTFS route_id prefix in the GPS feed. In these IDs the
-# digit after the underscore is the direction; "2" was city-bound on every T4
-# train checked against movement south of Town Hall.
+# digit after the underscore is the direction; on T4, "2" runs towards Bondi
+# Junction and "1" away from it (checked against movement of live trains).
 _FEED_PREFIX = {"T4": "ESI_", "South Coast": "SCO_", "SCO": "SCO_"}
-CITY_BOUND = "2"
 
 
-def city_bound(route: str, vehicle: dict) -> bool:
-    """Could this GPS vehicle be a city-bound train on *route*?
+def same_direction(route: str, vehicle: dict, feed_direction: str) -> bool:
+    """Could this GPS vehicle be a train on *route* running in *feed_direction*?
 
-    Routes without a known feed prefix accept any vehicle.
+    Routes without a known feed prefix, or no direction, accept any vehicle.
     """
     prefix = next((p for k, p in _FEED_PREFIX.items() if k in route), None)
+    if prefix is None or not feed_direction:
+        return True
     rid = vehicle.get("route_id") or ""
-    return prefix is None or (rid.startswith(prefix) and rid[len(prefix) :][:1] == CITY_BOUND)
+    return rid.startswith(prefix) and rid[len(prefix) :][:1] == feed_direction
 
 
 def fresh(vehicle: dict, now: datetime) -> bool:
@@ -52,6 +53,9 @@ class Trip:
     arrival: datetime
     live: bool
     stops: list[str]
+    origin: str = ""  # station names of the trip, fixed when it was picked
+    dest: str = ""
+    feed_direction: str = ""
     coords: list[LatLon | None] = field(default_factory=list)
     vehicle_id: str | None = None
     pos: float | None = None  # index along stops; 2.5 = halfway from stop 2 to 3
@@ -156,7 +160,7 @@ def locate(trip: Trip, vehicles: list[dict], now: datetime) -> None:
     if chosen is None:
         candidates = []
         for v in vehicles:
-            if not city_bound(trip.route, v):
+            if not same_direction(trip.route, v, trip.feed_direction):
                 continue
             p = placed(v)
             if p and p[1] < 800 and abs(p[0] - expected) < 3:

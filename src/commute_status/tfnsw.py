@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from mcp import ClientSession
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
@@ -74,39 +74,27 @@ async def find_stop(s: ClientSession, name: str) -> tuple[str, LatLon | None]:
     return str(stops[0]["id"]), (lat, lon) if lat is not None and lon is not None else None
 
 
-def goes_towards(dep: dict, place: str = config.TOWARDS) -> bool:
-    """True if the service calls at *place* after this stop.
+async def direct_trains(
+    s: ClientSession, origin_id: str, dest_id: str, since: datetime, upcoming: int, now: datetime
+) -> list[Journey]:
+    """Direct trains from origin to destination departing from *since* on.
 
-    Uses the onward stop list when the API provides it; otherwise the
-    destination name (e.g. "Bondi Junction" trains run via Town Hall).
+    The trip planner, unlike the departure board, only returns trains that
+    actually stop at the destination, in either direction. It answers about
+    four journeys at a time, so it is asked again from the last departure
+    until *upcoming* trains leaving after *now* are known.
     """
-    target = place.lower()
-    onwards = dep.get("onwards_locations") or []
-    if onwards:
-        return target in json.dumps(onwards).lower()
-    destination = ((dep.get("transportation") or {}).get("destination_name") or "").lower()
-    return target in destination or "bondi junction" in destination
-
-
-async def departures_towards(s: ClientSession, stop_id: str) -> list[Departure]:
-    # concise=False: we need the destination to pick a direction.
-    data = await call(s, "get_departures", {"stop_id": stop_id, "concise": False})
-    out = []
-    for dep in data.get("departures", []):
-        est, planned = parse_time(dep.get("departure_estimated")), parse_time(dep.get("departure_planned"))
-        if not (est or planned) or not goes_towards(dep):
-            continue
-        t = dep.get("transportation") or {}
-        out.append(
-            Departure(
-                time=est or planned,
-                route=t.get("number") or t.get("name") or "",
-                line=t.get("disassembled_name") or t.get("number") or "Train",
-                destination=t.get("destination_name") or "",
-                live=est is not None,
-            )
-        )
-    return sorted(out, key=lambda d: d.time)
+    found: dict[tuple[datetime, str], Journey] = {}
+    when = since
+    for _ in range(4):
+        journeys = await plan(s, origin_id, dest_id, when=when, n=8)
+        for j in journeys:
+            if j.changes == 0 and j.route:
+                found[(j.departure, j.route)] = j
+        if not journeys or sum(j.departure >= now for j in found.values()) >= upcoming:
+            break
+        when = max(j.departure for j in journeys) + timedelta(minutes=1)
+    return sorted(found.values(), key=lambda j: j.departure)
 
 
 def _journeys(data: dict) -> list[Journey]:

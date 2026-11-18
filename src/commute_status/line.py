@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 
-from . import config, tfnsw, travel
+from . import tfnsw, travel
 from .config import short
 from .tfnsw import LatLon
 
@@ -54,10 +54,10 @@ class Line:
 
 
 async def build(
-    s, home_id: str, dest_id: str, coords_cache: dict[str, LatLon | None]
+    s, home_id: str, dest_id: str, line_start: str, coords_cache: dict[str, LatLon | None]
 ) -> Line:
     async def upstream() -> list[str]:
-        start = config.LINE_START
+        start = line_start
         if not start:
             return []
         start_id, _ = await tfnsw.find_stop(s, start)
@@ -96,7 +96,7 @@ async def build(
 
 
 def match(
-    line: Line, guesses: list[tuple[str, float]], vehicles: list[dict], now: datetime
+    line: Line, guesses: list[tuple[str, float]], vehicles: list[dict], now: datetime, feed_direction: str
 ) -> dict[int, tuple[float, float]]:
     """Assign GPS vehicles to trains.
 
@@ -114,7 +114,7 @@ def match(
     pairs = []
     for ti, (route, guess) in enumerate(guesses):
         for vi, (v, (pos, off)) in enumerate(placed):
-            if travel.city_bound(route, v) and abs(pos - guess) < MAX_GUESS_ERROR:
+            if travel.same_direction(route, v, feed_direction) and abs(pos - guess) < MAX_GUESS_ERROR:
                 pairs.append((abs(pos - guess), ti, vi))
 
     out: dict[int, tuple[float, float]] = {}
@@ -130,24 +130,29 @@ def match(
 # --- cache: the line rarely changes, so map it once and keep it on disk -----
 
 
-def _cache_key(home_id: str, dest_id: str) -> str:
-    return f"{config.LINE_START}|{home_id}|{dest_id}"
-
-
-def load_cached(home_id: str, dest_id: str) -> Line | None:
+def _read_cache() -> dict:
     try:
         data = json.loads(CACHE_FILE.read_text())
-        if data.pop("key") != _cache_key(home_id, dest_id):
-            return None
+        return data if isinstance(data, dict) and "key" not in data else {}  # old single-line format
+    except (OSError, ValueError):
+        return {}
+
+
+def load_cached(key: str) -> Line | None:
+    """The mapped line for a direction (config.Direction.key), if cached."""
+    try:
+        data = dict(_read_cache()[key])
         data["coords"] = [tuple(c) if c else None for c in data["coords"]]
         return Line(**data)
-    except (OSError, ValueError, KeyError, TypeError):
+    except (KeyError, TypeError):
         return None
 
 
-def save_cached(line_: Line, home_id: str, dest_id: str) -> None:
+def save_cached(line_: Line, key: str) -> None:
     try:
+        cache = _read_cache()
+        cache[key] = asdict(line_)
         CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_FILE.write_text(json.dumps({"key": _cache_key(home_id, dest_id), **asdict(line_)}))
+        CACHE_FILE.write_text(json.dumps(cache))
     except OSError:
         pass  # only a speed-up
