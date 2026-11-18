@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import signal
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -22,6 +24,7 @@ from datetime import datetime, timedelta
 
 import rumps
 from AppKit import NSApplication, NSFloatingWindowLevel, NSScreen
+from Foundation import NSRunLoop, NSRunLoopCommonModes, NSTimer
 
 from . import config, line, tfnsw, travel
 from .config import SYDNEY, short
@@ -120,6 +123,7 @@ class CommuteApp(rumps.App):
         self._level = TITLE_LEVELS.get(style, 0)
         self._hidden_streak = 0
         self._hidden_notified = False
+        self.quitting = False
 
     # --- fetching (background thread) -------------------------------------
 
@@ -275,6 +279,9 @@ class CommuteApp(rumps.App):
             )
             _bring_to_front(window)
             response = window.run()
+            if self.quitting:  # Ctrl-C closed the dialog
+                rumps.quit_application()
+                return None
             text = response.text.strip()
             return text if response.clicked and text else None
 
@@ -477,5 +484,38 @@ def run() -> None:
     def _remember_position() -> None:
         app._nsapp.nsstatusitem.setAutosaveName_(AUTOSAVE_NAME)
 
+    @rumps.events.before_start.register
+    def _ctrl_c_quits() -> None:
+        _quit_on_ctrl_c(app)
+
     app.fetch_now()
     app.run()
+
+
+def _quit_on_ctrl_c(app: CommuteApp) -> None:
+    """Make Ctrl-C in the terminal quit the app, even with a dialog open.
+
+    rumps' own Ctrl-C handling only runs in the run loop's default mode, so it
+    is ignored while a dialog (which runs its own modal loop) or the menu is
+    open. Python only runs a signal handler between bytecodes on the main
+    thread, so a tick in every run loop mode gives it the chance to.
+    """
+
+    def on_ctrl_c(signum, frame) -> None:
+        # `uv run` forwards Ctrl-C to the app, which also gets it from the
+        # terminal: act on the first one only.
+        if app.quitting:
+            return
+        app.quitting = True
+        # If a clean quit gets stuck, leave anyway.
+        threading.Timer(2.0, os._exit, args=(130,)).start()
+        nsapp = NSApplication.sharedApplication()
+        if nsapp.modalWindow() is not None:
+            nsapp.abortModal()  # change_stations sees app.quitting and quits
+        else:
+            rumps.quit_application()
+
+    signal.signal(signal.SIGINT, on_ctrl_c)
+    tick = NSTimer.timerWithTimeInterval_repeats_block_(0.3, True, lambda _timer: None)
+    NSRunLoop.currentRunLoop().addTimer_forMode_(tick, NSRunLoopCommonModes)
+    app._ctrl_c_tick = tick  # keep a reference
