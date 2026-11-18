@@ -1,8 +1,9 @@
 """Where the trains on the departure list are right now.
 
 The line is mapped once as a list of stations from a start point upstream of
-the home station (Waterfall by default) through the home station to the
-destination, with coordinates. Each listed train gets a timetable guess of
+the home station (by default the terminus trains come from, e.g. Waterfall for
+Engadine -> Town Hall) through the home station to the destination, with
+coordinates. Each listed train gets a timetable guess of
 where it should be on that line; city-bound GPS vehicles are then assigned to
 the closest guesses, one vehicle per train.
 """
@@ -13,6 +14,7 @@ import asyncio
 import json
 import math
 import os
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +60,8 @@ async def build(
 ) -> Line:
     async def upstream() -> list[str]:
         start = line_start
+        if start == "auto":
+            start = await terminus_beyond(s, home_id, dest_id)
         if not start:
             return []
         start_id, _ = await tfnsw.find_stop(s, start)
@@ -74,16 +78,7 @@ async def build(
     down_stops = [short(n) for n in down.stops]
 
     stops = up_stops + down_stops
-    missing = [n for n in dict.fromkeys(stops) if n not in coords_cache]
-    gate = asyncio.Semaphore(LOOKUPS_AT_ONCE)
-
-    async def lookup(name: str):
-        async with gate:
-            return await tfnsw.find_stop(s, name)
-
-    found = await asyncio.gather(*(lookup(n) for n in missing))
-    for name, (_, coords) in zip(missing, found):
-        coords_cache[name] = coords
+    await lookup_coords(s, stops, coords_cache)
     run_min = (down.arrival - down.departure).total_seconds() / 60
     per_stop = run_min / max(1, len(down_stops) - 1)
     return Line(
@@ -93,6 +88,32 @@ async def build(
         dest=len(stops) - 1,
         per_stop_min=per_stop if per_stop > 0 else 2.0,
     )
+
+
+async def terminus_beyond(s, home_id: str, dest_id: str) -> str | None:
+    """Where trains come from before reaching the home station.
+
+    Trains running the other way (destination -> home) carry on past the home
+    station to a terminus, e.g. Town Hall -> Engadine trains run "to Waterfall
+    via Banksia". The most common such terminus is where this direction's
+    trains start, so the line is mapped from there.
+    """
+    back = await tfnsw.plan(s, dest_id, home_id, n=8)
+    ends = [j.towards.split(" via ")[0].strip() for j in back if j.changes == 0 and j.towards]
+    return Counter(ends).most_common(1)[0][0] if ends else None
+
+
+async def lookup_coords(s, names: list[str], coords_cache: dict[str, LatLon | None]) -> None:
+    """Fill in coordinates for station short names not cached yet, a few at a time."""
+    missing = [n for n in dict.fromkeys(names) if n not in coords_cache]
+    gate = asyncio.Semaphore(LOOKUPS_AT_ONCE)
+
+    async def one(name: str):
+        async with gate:
+            return await tfnsw.find_stop(s, name)
+
+    for name, (_, coords) in zip(missing, await asyncio.gather(*(one(n) for n in missing))):
+        coords_cache[name] = coords
 
 
 def match(

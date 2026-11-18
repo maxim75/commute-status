@@ -21,6 +21,11 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 
 ### Wait and travelling modes
 
+- **Stations:** choose **Change stations…** in the dropdown and type the
+  station you start from and the one you travel to. They're checked with
+  TfNSW (the station must exist and have direct trains between them), saved to
+  `~/.config/commute-status/stations.json` and used straight away. Without a
+  saved choice, `COMMUTE_STATION` / `COMMUTE_TOWARDS` from `.env` apply.
 - **Direction by time of day:** Engadine → Town Hall until 14:00, then
   Town Hall → Engadine until midnight (`COMMUTE_RETURN_AFTER`, empty to
   disable). A train you are following keeps its direction across the switch.
@@ -28,8 +33,9 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
   dropdown lists trains that already left but haven't reached Town Hall yet
   (with their arrival time), then the next departures, each with where the
   train is now (`at Heathcote`, `→ Sydenham`) from the Sydney Trains GPS feed.
-  The line is mapped once per direction, from `COMMUTE_LINE_START` (default
-  Waterfall) or `COMMUTE_RETURN_LINE_START` (default Bondi Junction) to the
+  The line is mapped once per direction, from the terminus the trains come
+  from (worked out automatically, e.g. Waterfall for Engadine → Town Hall; set
+  `COMMUTE_LINE_START` / `COMMUTE_RETURN_LINE_START` to override) to the
   destination, and cached in `~/.cache/commute-status/line.json`.
 - **Pick a train**: click a departure in the dropdown. Until it leaves, the
   countdown follows that train.

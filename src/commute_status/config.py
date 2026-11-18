@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, time
@@ -32,11 +33,12 @@ MCP_URL = os.environ.get("TFNSW_MCP_URL", "https://tfnsw-trip-planner.cool.imaxi
 STATION = os.environ.get("COMMUTE_STATION", "Engadine Station")
 TOWARDS = os.environ.get("COMMUTE_TOWARDS", "Town Hall")
 # Where to start mapping the line, upstream of STATION, to place trains still on
-# their way to it. Empty = only map from STATION onwards.
-LINE_START = os.environ.get("COMMUTE_LINE_START", "Waterfall Station")
+# their way to it. "auto" = the terminus trains come from; empty = only map from
+# STATION onwards.
+LINE_START = os.environ.get("COMMUTE_LINE_START", "auto")
 # From this time of day the trip is reversed (TOWARDS -> STATION). Empty = never.
 RETURN_AFTER = os.environ.get("COMMUTE_RETURN_AFTER", "14:00")
-RETURN_LINE_START = os.environ.get("COMMUTE_RETURN_LINE_START", "Bondi Junction Station")
+RETURN_LINE_START = os.environ.get("COMMUTE_RETURN_LINE_START", "auto")
 # GTFS direction digit of the morning trip in the GPS feed's route IDs
 # ("ESI_2a"): on T4 and South Coast, 2 runs towards the city / Bondi Junction.
 FEED_DIRECTION = os.environ.get("COMMUTE_FEED_DIRECTION", "2")
@@ -73,8 +75,37 @@ class Direction:
         return f"{short(self.station)} → {short(self.towards)}"
 
 
-MORNING = Direction(STATION, TOWARDS, LINE_START, FEED_DIRECTION)
-RETURN = Direction(TOWARDS, STATION, RETURN_LINE_START, {"1": "2", "2": "1"}.get(FEED_DIRECTION, ""))
+# Stations picked in the app's "Change stations…" dialog override .env.
+STATIONS_FILE = _user_config_dir() / "stations.json"
+
+
+def _saved_stations() -> tuple[str, str] | None:
+    try:
+        data = json.loads(STATIONS_FILE.read_text())
+        return data["station"], data["towards"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _directions(station: str, towards: str) -> tuple[Direction, Direction]:
+    # A configured line start belongs to the .env stations; others work it out.
+    custom = (station, towards) != (STATION, TOWARDS)
+    morning = Direction(station, towards, "auto" if custom else LINE_START, FEED_DIRECTION)
+    back = Direction(
+        towards, station, "auto" if custom else RETURN_LINE_START, {"1": "2", "2": "1"}.get(FEED_DIRECTION, "")
+    )
+    return morning, back
+
+
+MORNING, RETURN = _directions(*(_saved_stations() or (STATION, TOWARDS)))
+
+
+def set_stations(station: str, towards: str) -> None:
+    """Use these stations from now on, and remember them across restarts."""
+    global MORNING, RETURN
+    MORNING, RETURN = _directions(station, towards)
+    STATIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATIONS_FILE.write_text(json.dumps({"station": station, "towards": towards}, indent=1))
 
 
 def _parse_hhmm(value: str) -> time | None:

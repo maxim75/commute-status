@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from datetime import datetime, timedelta
 
 from mcp import ClientSession
@@ -72,6 +74,38 @@ async def find_stop(s: ClientSession, name: str) -> tuple[str, LatLon | None]:
     coord = stops[0].get("coord") or {}
     lat, lon = coord.get("latitude"), coord.get("longitude")
     return str(stops[0]["id"]), (lat, lon) if lat is not None and lon is not None else None
+
+
+async def check_stations(s: ClientSession, station: str, towards: str) -> tuple[str, str]:
+    """Validate a station pair typed by the user.
+
+    Returns their canonical names (e.g. "sutherland" -> "Sutherland Station").
+    Raises RuntimeError with a readable reason if a station isn't found or no
+    direct train runs between them (the app only lists direct trains).
+    """
+
+    async def resolve(name: str) -> tuple[str, str]:
+        query = name if "station" in name.lower() else f"{name} Station"
+        found = await call(s, "find_stop", {"query": query, "location_type": "stop", "limit": 1})
+        stops = found.get("locations") or []
+        if not stops or "station" not in (stops[0].get("name") or "").lower():
+            raise RuntimeError(f"No station found for “{name}”")
+        full = stops[0]["name"].split(",")[0]
+        # TfNSW always returns its best guess ("Nowhereville" -> Roseville at
+        # 908), so accept only a near-exact match or a name close to what was typed.
+        typed = name.lower().removesuffix(" station").strip()
+        similar = SequenceMatcher(None, typed, config.short(full).lower()).ratio()
+        if (stops[0].get("match_quality") or 0) < 990 and similar < 0.75:
+            raise RuntimeError(f"“{name}” isn't a station; did you mean {config.short(full)}?")
+        return str(stops[0]["id"]), full
+
+    (a_id, a_name), (b_id, b_name) = await asyncio.gather(resolve(station), resolve(towards))
+    if a_id == b_id:
+        raise RuntimeError("Start and end are the same station")
+    journeys = await plan(s, a_id, b_id, n=4)
+    if not any(j.changes == 0 and j.route for j in journeys):
+        raise RuntimeError(f"No direct trains from {a_name} to {b_name}")
+    return a_name, b_name
 
 
 async def direct_trains(

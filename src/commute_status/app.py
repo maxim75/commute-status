@@ -29,6 +29,7 @@ from .config import SYDNEY, short
 END_AFTER_ARRIVAL = timedelta(minutes=2)
 TITLE_LEVELS = {"full": 0, "compact": 1, "minimal": 2}  # COMMUTE_TITLE; anything else = auto
 AUTOSAVE_NAME = "commute-status"  # macOS remembers a ⌘-dragged position under this name
+CHANGE_STATIONS = "Change stations…"
 
 
 def _notify(title: str, message: str) -> None:
@@ -90,7 +91,11 @@ class CommuteApp(rumps.App):
         self.last_fetch = datetime.min.replace(tzinfo=SYDNEY)
         self._lock = threading.Lock()
         self._fetching = False
-        self.menu = [rumps.MenuItem("Refresh now", callback=lambda _: self.fetch_now()), None]
+        self.menu = [
+            rumps.MenuItem("Refresh now", callback=lambda _: self.fetch_now()),
+            None,
+            rumps.MenuItem(CHANGE_STATIONS, callback=self.change_stations),
+        ]
         style = config.TITLE_STYLE
         self._auto_title = style not in TITLE_LEVELS
         self._level = TITLE_LEVELS.get(style, 0)
@@ -164,6 +169,9 @@ class CommuteApp(rumps.App):
                 mapped = await line.build(s, home, dest, direction.line_start, self.coords)
                 line.save_cached(mapped, direction.key)
             self.lines[direction.key] = mapped
+            # Travelling mode needs the same stations; don't look them up twice.
+            for name, coords in zip(mapped.stops, mapped.coords):
+                self.coords.setdefault(name, coords)
         return await tfnsw.train_positions(s)
 
     def _board(self, direction: config.Direction, trains: list[tfnsw.Journey], now: datetime, warnings=()) -> Board:
@@ -197,10 +205,7 @@ class CommuteApp(rumps.App):
             journeys = await tfnsw.plan(s, origin, dest, when=trip.picked - timedelta(minutes=2), n=4)
             journey = travel.best_journey(trip, journeys)
             stops = journey.stops if journey else trip.stops
-            for name in stops:
-                key = short(name)
-                if key not in self.coords:
-                    _, self.coords[key] = await tfnsw.find_stop(s, key)
+            await line.lookup_coords(s, [short(n) for n in stops], self.coords)
             now = datetime.now(SYDNEY)
             vehicles = await tfnsw.train_positions(s) if now >= trip.departure else []
 
@@ -235,6 +240,52 @@ class CommuteApp(rumps.App):
         self._fetching = False  # a wait-mode fetch in flight must not block this one
         self.fetch_now()
         self.redraw(None)
+
+    def change_stations(self, _=None) -> None:
+        """Ask for start and end stations, check them with TfNSW, then switch."""
+        current = config.MORNING
+
+        def ask(message: str, default: str) -> str | None:
+            window = rumps.Window(
+                message=message,
+                title="Commute stations",
+                default_text=short(default),
+                ok="Next" if "start" in message else "Save",
+                cancel="Cancel",
+                dimensions=(260, 22),
+            )
+            response = window.run()
+            text = response.text.strip()
+            return text if response.clicked and text else None
+
+        station = ask("Station you start from in the morning (e.g. Engadine):", current.station)
+        if not station:
+            return
+        towards = ask(
+            f"Station you travel to from {station} (e.g. Town Hall).\n"
+            f"After {config.RETURN_AFTER or 'never'} the app shows the trip back.",
+            current.towards,
+        )
+        if not towards:
+            return
+        threading.Thread(target=self._apply_stations, args=(station, towards), daemon=True).start()
+
+    def _apply_stations(self, station: str, towards: str) -> None:
+        async def check():
+            async with tfnsw.session() as s:
+                return await tfnsw.check_stations(s, station, towards)
+
+        try:
+            station, towards = asyncio.run(check())
+        except Exception as exc:
+            _notify("Stations not changed", str(exc) or type(exc).__name__)
+            return
+        config.set_stations(station, towards)
+        with self._lock:
+            self.board = None
+        _notify("Stations changed", f"{short(station)} ⇄ {short(towards)}")
+        self._fetching = False  # a fetch for the old stations must not block this one
+        self.fetch_now()
 
     def stop_travelling(self, _=None) -> None:
         with self._lock:
@@ -314,10 +365,10 @@ class CommuteApp(rumps.App):
         items += [rumps.MenuItem(f"⚠︎ {e[:80]}") for e in errors]
 
         for key in list(self.menu.keys())[2:]:
-            if key != "Quit":
+            if key not in (CHANGE_STATIONS, "Quit"):
                 del self.menu[key]
         for item in items:
-            self.menu.insert_before("Quit", item)
+            self.menu.insert_before(CHANGE_STATIONS, item)
 
     def _wait_items(self, board: Board | None, errors: list[str], now: datetime) -> list[rumps.MenuItem]:
         upcoming = [r for r in board.rows if r.time >= now] if board else []
@@ -365,6 +416,10 @@ class CommuteApp(rumps.App):
             items.append(rumps.MenuItem(f"Your train: {trip.departure:%H:%M} {trip.line}{live}"))
             if trip.planned:
                 items.append(rumps.MenuItem(f"Arrives {dest} {trip.arrival:%H:%M}"))
+        elif not trip.planned:
+            # Departed, but the planner hasn't answered yet: no real arrival or stops.
+            self._set_title("🚆 …", "🚆 …", "…")
+            items.append(rumps.MenuItem(f"Finding your {trip.departure:%H:%M} {trip.line}…"))
         elif trip.arrived(now):
             self._set_title(f"🚆 {short(dest)}", "🚆 ✓", "✓")
             items.append(rumps.MenuItem(f"Arrived at {dest}"))
