@@ -22,7 +22,11 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default `Eng
 ### Wait and travelling modes
 
 - **Wait mode** (default): `🚆 11 min` counts down to the next train. The
-  dropdown lists the next departures.
+  dropdown lists trains that already left but haven't reached Town Hall yet
+  (with their arrival time), then the next departures, each with where the
+  train is now (`at Heathcote`, `→ Sydenham`) from the Sydney Trains GPS feed.
+  The line is mapped once from `COMMUTE_LINE_START` (default Waterfall) to the
+  destination and cached in `~/.cache/commute-status/line.json`.
 - **Pick a train**: click a departure in the dropdown. Until it leaves, the
   countdown follows that train.
 - **Travelling mode** (from departure): `🚆 23 min · next Sutherland` shows
@@ -34,7 +38,7 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default `Eng
 - It returns to wait mode two minutes after arrival, or via **Stop travelling**.
 
 Code layout: `app.py` (menu bar), `tfnsw.py` (MCP calls), `travel.py`
-(following a train), `config.py` (settings).
+(following a train), `line.py` (train positions on the list), `config.py` (settings).
 
 ### Running with uvx or as an installed tool
 

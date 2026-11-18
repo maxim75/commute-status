@@ -32,6 +32,7 @@ class Journey:
     route: str  # first vehicle leg's route name ("" for walk-only)
     stops: list[str]  # first vehicle leg's stop names, origin to destination
     live: bool
+    towards: str = ""  # first vehicle leg's destination, e.g. "Bondi Junction via Wolli Creek"
 
 
 @asynccontextmanager
@@ -124,6 +125,7 @@ def _journeys(data: dict) -> list[Journey]:
                 route=first.get("route", ""),
                 stops=first.get("stops", []),
                 live=bool(first.get("realtime")),
+                towards=first.get("towards", ""),
             )
         )
     return out

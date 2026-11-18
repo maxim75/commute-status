@@ -24,8 +24,23 @@ AT_STATION_M = 250  # within this of a station counts as "at" it
 # Route-name prefix -> GTFS route_id prefix in the GPS feed. In these IDs the
 # digit after the underscore is the direction; "2" was city-bound on every T4
 # train checked against movement south of Town Hall.
-_FEED_PREFIX = {"T4": "ESI_", "South Coast": "SCO_"}
+_FEED_PREFIX = {"T4": "ESI_", "South Coast": "SCO_", "SCO": "SCO_"}
 CITY_BOUND = "2"
+
+
+def city_bound(route: str, vehicle: dict) -> bool:
+    """Could this GPS vehicle be a city-bound train on *route*?
+
+    Routes without a known feed prefix accept any vehicle.
+    """
+    prefix = next((p for k, p in _FEED_PREFIX.items() if k in route), None)
+    rid = vehicle.get("route_id") or ""
+    return prefix is None or (rid.startswith(prefix) and rid[len(prefix) :][:1] == CITY_BOUND)
+
+
+def fresh(vehicle: dict, now: datetime) -> bool:
+    seen = parse_time(vehicle.get("timestamp"))
+    return seen is not None and now - seen <= GPS_STALE
 
 
 @dataclass
@@ -125,7 +140,6 @@ def timetable_pos(trip: Trip, now: datetime) -> float:
 def locate(trip: Trip, vehicles: list[dict], now: datetime) -> None:
     """Update trip.pos from the GPS feed, or from the timetable if it can't."""
     expected = timetable_pos(trip, now)
-    prefix = next((p for k, p in _FEED_PREFIX.items() if k in trip.route), None)
 
     def placed(v: dict) -> tuple[float, float] | None:
         return project(trip.coords, (v["latitude"], v["longitude"]))
@@ -142,8 +156,7 @@ def locate(trip: Trip, vehicles: list[dict], now: datetime) -> None:
     if chosen is None:
         candidates = []
         for v in vehicles:
-            rid = v.get("route_id") or ""
-            if prefix and not (rid.startswith(prefix) and rid[len(prefix):][:1] == CITY_BOUND):
+            if not city_bound(trip.route, v):
                 continue
             p = placed(v)
             if p and p[1] < 800 and abs(p[0] - expected) < 3:
@@ -154,7 +167,7 @@ def locate(trip: Trip, vehicles: list[dict], now: datetime) -> None:
 
     if chosen is not None:
         seen = parse_time(chosen.get("timestamp")) or now
-        if now - seen <= GPS_STALE:
+        if fresh(chosen, now):
             pos, off = placed(chosen)
             # Never show the train going backwards from GPS jitter.
             trip.pos = max(pos, trip.pos or 0.0) if trip.pos_source == "gps" else pos

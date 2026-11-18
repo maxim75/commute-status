@@ -30,6 +30,10 @@ MCP_URL = os.environ.get("TFNSW_MCP_URL", "https://tfnsw-trip-planner.cool.imaxi
 STATION = os.environ.get("COMMUTE_STATION", "Engadine Station")
 STOP_ID = os.environ.get("COMMUTE_STOP_ID")  # skip the name lookup if set
 TOWARDS = os.environ.get("COMMUTE_TOWARDS", "Town Hall")  # only trains calling here later
+# Where to start mapping the line, upstream of STATION, to place trains still on
+# their way to it. Empty = only map from STATION onwards.
+LINE_START = os.environ.get("COMMUTE_LINE_START", "Waterfall Station")
+DEPARTED_WINDOW_MIN = 60  # look this far back for trains still on their way
 
 TITLE_STYLE = os.environ.get("COMMUTE_TITLE", "auto")  # auto | full | compact | minimal
 
