@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import rumps
-from AppKit import NSScreen
+from AppKit import NSApplication, NSFloatingWindowLevel, NSScreen
 
 from . import config, line, tfnsw, travel
 from .config import SYDNEY, short
@@ -36,6 +36,25 @@ def _notify(title: str, message: str) -> None:
     # rumps.notification needs a bundled app; osascript works from plain Python.
     script = f"display notification {json.dumps(message)} with title {json.dumps(title)}"
     subprocess.run(["osascript", "-e", script], check=False, capture_output=True)
+
+
+def _bring_to_front(window: rumps.Window) -> None:
+    """Make a dialog visible and typeable.
+
+    A menu bar app is never the active app, and plain Python starts with the
+    "prohibited" activation policy, which can't become active at all, so its
+    dialogs open behind every other window. "Accessory" still has no Dock icon
+    but may come to the front.
+    """
+    nsapp = NSApplication.sharedApplication()
+    nsapp.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
+    if hasattr(nsapp, "activate"):  # macOS 14+
+        nsapp.activate()
+    else:
+        nsapp.activateIgnoringOtherApps_(True)
+    alert_window = window._alert.window()
+    alert_window.setLevel_(NSFloatingWindowLevel)  # above other apps even if activation is refused
+    alert_window.setInitialFirstResponder_(window._textfield)
 
 
 @dataclass
@@ -254,6 +273,7 @@ class CommuteApp(rumps.App):
                 cancel="Cancel",
                 dimensions=(260, 22),
             )
+            _bring_to_front(window)
             response = window.run()
             text = response.text.strip()
             return text if response.clicked and text else None
