@@ -21,6 +21,16 @@ from .tfnsw import Journey, LatLon, parse_time
 GPS_STALE = timedelta(minutes=3)
 AT_STATION_M = 250  # within this of a station counts as "at" it
 
+
+def progress_icon(pos: float) -> str:
+    """Quarter pie for how far a train is between two stops: ◔ ◑ ◕.
+
+    *pos* is an index along the stops (4.6 = 60% from stop 4 to stop 5).
+    Measured in a straight line between the stations, so only rough.
+    """
+    frac = pos - math.floor(pos)
+    return "◔" if frac < 0.375 else "◑" if frac < 0.625 else "◕"
+
 # Route-name prefix -> GTFS route_id prefix in the GPS feed. In these IDs the
 # digit after the underscore is the direction; on T4, "2" runs towards Bondi
 # Junction and "1" away from it (checked against movement of live trains).
@@ -91,6 +101,12 @@ class Trip:
         if abs(self.pos - i) < 0.08 and (self.off_m is None or self.off_m < AT_STATION_M):
             return "at", short(self.stops[i])
         return "next", short(self.stops[min(math.ceil(self.pos), len(self.stops) - 1)])
+
+    def progress(self) -> str | None:
+        """◔ ◑ ◕ between stops, from GPS only: a timetable guess is too rough."""
+        if self.pos is None or not self.stops or self.pos_source != "gps" or self.where()[0] != "next":
+            return None
+        return progress_icon(self.pos)
 
     def between(self) -> str | None:
         if self.pos is None or not self.stops:

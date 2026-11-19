@@ -453,14 +453,15 @@ class CommuteApp(rumps.App):
         else:
             mins = _minutes(trip.arrival - now)
             kind, station = trip.where()
+            pie = trip.progress()  # ◔ ◑ ◕ on the way to the next station, GPS only
             self._set_title(
-                f"🚆 {mins} min · {kind} {station}" if station else f"🚆 {mins} min",
-                f"🚆 {mins}m · {station}" if station else f"🚆 {mins}m",
+                f"🚆 {mins} min · {pie or kind} {station}" if station else f"🚆 {mins} min",
+                f"🚆 {mins}m · {pie + ' ' if pie else ''}{station}" if station else f"🚆 {mins}m",
                 f"{mins}m",
             )
             items.append(rumps.MenuItem(f"{trip.line} to {dest}: arrive {trip.arrival:%H:%M}{live}"))
             if trip.between() and kind == "next":
-                items.append(rumps.MenuItem(f"Between {trip.between()}"))
+                items.append(rumps.MenuItem(f"Between {trip.between()}{'  ' + pie if pie else ''}"))
             if trip.pos_source == "gps" and trip.pos_time:
                 items.append(rumps.MenuItem(f"Position from train GPS, {trip.pos_time:%H:%M:%S}"))
             else:
