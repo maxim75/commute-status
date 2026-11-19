@@ -33,6 +33,8 @@ END_AFTER_ARRIVAL = timedelta(minutes=2)
 TITLE_LEVELS = {"full": 0, "compact": 1, "minimal": 2}  # COMMUTE_TITLE; anything else = auto
 AUTOSAVE_NAME = "commute-status"  # macOS remembers a ⌘-dragged position under this name
 CHANGE_STATIONS = "Change stations…"
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # shown in place of 🚆 while data is being requested
+SPIN_EVERY = 0.15  # seconds per frame
 
 
 def _notify(title: str, message: str) -> None:
@@ -113,6 +115,9 @@ class CommuteApp(rumps.App):
         self.last_fetch = datetime.min.replace(tzinfo=SYDNEY)
         self._lock = threading.Lock()
         self._fetching = False
+        self._requests = 0  # requests in flight, for the spinner; several can overlap
+        self._spin = 0  # spinner frame
+        self._title_parts = ("🚆 …", "🚆 …", "…")
         self.menu = [
             rumps.MenuItem("Refresh now", callback=lambda _: self.fetch_now()),
             None,
@@ -134,8 +139,17 @@ class CommuteApp(rumps.App):
         self.last_fetch = datetime.now(SYDNEY)
         threading.Thread(target=self._fetch, daemon=True).start()
 
+    def _request_started(self) -> None:
+        with self._lock:
+            self._requests += 1
+
+    def _request_done(self) -> None:
+        with self._lock:
+            self._requests -= 1
+
     def _fetch(self) -> None:
         errors: list[str] = []
+        self._request_started()
         try:
             with self._lock:
                 trip = self.trip
@@ -149,6 +163,7 @@ class CommuteApp(rumps.App):
             with self._lock:
                 self.errors = errors
             self._fetching = False
+            self._request_done()
 
     async def _stop_id(self, s, name: str) -> str:
         if name not in self.stop_ids:
@@ -302,11 +317,14 @@ class CommuteApp(rumps.App):
             async with tfnsw.session() as s:
                 return await tfnsw.check_stations(s, station, towards)
 
+        self._request_started()
         try:
             station, towards = asyncio.run(check())
         except Exception as exc:
             _notify("Stations not changed", str(exc) or type(exc).__name__)
             return
+        finally:
+            self._request_done()
         config.set_stations(station, towards)
         with self._lock:
             self.board = None
@@ -340,7 +358,23 @@ class CommuteApp(rumps.App):
     # even the shortest one doesn't fit, says so once in a notification.
 
     def _set_title(self, full: str, compact: str, minimal: str) -> None:
-        self.title = (full, compact, minimal)[self._level]
+        self._title_parts = (full, compact, minimal)
+        self._show_title()
+
+    def _show_title(self) -> None:
+        """The title, with a spinner in place of 🚆 while a request is in flight."""
+        title = self._title_parts[self._level]
+        if self._requests > 0:
+            frame = SPINNER[self._spin % len(SPINNER)]
+            title = frame + title.removeprefix("🚆") if title.startswith("🚆") else frame + title
+        if title != self.title:
+            self.title = title
+
+    def _animate(self) -> None:
+        """Next spinner frame; once requests finish, put the 🚆 back."""
+        if self._requests > 0:
+            self._spin += 1
+        self._show_title()
 
     def _countdown(self, mins: int) -> None:
         if mins == 0:
@@ -492,6 +526,14 @@ def run() -> None:
     @rumps.events.before_start.register
     def _ctrl_c_quits() -> None:
         _quit_on_ctrl_c(app)
+
+    @rumps.events.before_start.register
+    def _spinner() -> None:
+        # In all run loop modes, so it keeps turning while the menu is open
+        # (rumps timers stop then).
+        timer = NSTimer.timerWithTimeInterval_repeats_block_(SPIN_EVERY, True, lambda _t: app._animate())
+        NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSRunLoopCommonModes)
+        app._spin_timer = timer  # keep a reference
 
     app.fetch_now()
     app.run()

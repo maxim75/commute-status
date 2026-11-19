@@ -29,6 +29,9 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 - **Direction by time of day:** Engadine → Town Hall until 14:00, then
   Town Hall → Engadine until midnight (`COMMUTE_RETURN_AFTER`, empty to
   disable). A train you are following keeps its direction across the switch.
+- **Refreshing:** while data is being requested (about every minute, or every
+  30 seconds when travelling, and a fetch takes around 10 seconds) a spinner
+  turns in place of the 🚆: `⠹ 11m`.
 - **Wait mode** (default): `🚆 11m` counts down to the next train. The
   dropdown lists trains that already left but haven't reached Town Hall yet
   (with their arrival time), then the next departures, each with where the
