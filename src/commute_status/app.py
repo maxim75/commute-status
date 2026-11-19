@@ -66,7 +66,7 @@ class Row:
     label: str
     live: bool = True
     departure: tfnsw.Departure | None = None  # the train this row is, for picking
-    position: str | None = None  # e.g. "at Heathcote", "→ Sydenham"
+    position: str | None = None  # e.g. "@Heathcote", "◑ Sydenham"
     arrival: datetime | None = None  # at the destination, for trains already on their way
 
 
@@ -454,9 +454,13 @@ class CommuteApp(rumps.App):
             mins = _minutes(trip.arrival - now)
             kind, station = trip.where()
             pie = trip.progress()  # ◔ ◑ ◕ on the way to the next station, GPS only
+            if kind == "at":  # stopped there
+                full = compact = f"@{station}"
+            else:
+                full, compact = f"{pie or kind} {station}", f"{pie} {station}" if pie else station
             self._set_title(
-                f"🚆 {mins}m · {pie or kind} {station}" if station else f"🚆 {mins}m",
-                f"🚆 {mins}m · {pie + ' ' if pie else ''}{station}" if station else f"🚆 {mins}m",
+                f"🚆 {mins}m · {full}" if station else f"🚆 {mins}m",
+                f"🚆 {mins}m · {compact}" if station else f"🚆 {mins}m",
                 f"{mins}m",
             )
             items.append(rumps.MenuItem(f"{trip.line} to {dest}: arrive {trip.arrival:%H:%M}{live}"))

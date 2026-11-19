@@ -32,7 +32,7 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 - **Wait mode** (default): `🚆 11m` counts down to the next train. The
   dropdown lists trains that already left but haven't reached Town Hall yet
   (with their arrival time), then the next departures, each with where the
-  train is now (`at Heathcote`, or `◑ Sydenham` when about halfway there from
+  train is now (`@Heathcote`, or `◑ Sydenham` when about halfway there from
   the previous stop; ◔ ◑ ◕ are rough quarters) from the Sydney Trains GPS feed.
   The line is mapped once per direction, from the terminus the trains come
   from (worked out automatically, e.g. Waterfall for Engadine → Town Hall; set
@@ -41,7 +41,7 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 - **Pick a train**: click a departure in the dropdown. Until it leaves, the
   countdown follows that train.
 - **Travelling mode** (from departure): `🚆 23m · ◑ Sutherland` shows
-  minutes to the destination and the next station (or `at Sutherland` while
+  minutes to the destination and the next station (or `@Sutherland` while
   stopped). The pie shows roughly how far the train is from the previous stop
   (◔ ◑ ◕), handy on long express runs. Position comes from the train's GPS in
   the Sydney Trains feed, falling back to a timetable estimate, which shows

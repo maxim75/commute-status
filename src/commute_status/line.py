@@ -48,13 +48,13 @@ class Line:
         return self.home + frac * (self.dest - self.home)
 
     def describe(self, pos: float, off_m: float | None) -> str:
-        """'at Heathcote' when stopped there, '◑ Heathcote' when on the way to it.
+        """'@Heathcote' when stopped there, '◑ Heathcote' when on the way to it.
 
         The pie shows roughly how far it is from the previous stop (◔ ◑ ◕).
         """
         i = round(pos)
         if abs(pos - i) < 0.08 and (off_m is None or off_m < travel.AT_STATION_M):
-            return f"at {self.stops[i]}"
+            return f"@{self.stops[i]}"
         return f"{travel.progress_icon(pos)} {self.stops[min(math.ceil(pos), len(self.stops) - 1)]}"
 
 
