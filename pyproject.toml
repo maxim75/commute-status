@@ -1,7 +1,7 @@
 [project]
 name = "commute-status"
 version = "0.1.0"
-description = "Add your description here"
+description = "macOS menu bar countdown to your next Sydney train, via the tfnsw MCP server"
 readme = "README.md"
 authors = [
     { name = "Maksym Kozlenko", email = "max@kozlenko.info" }

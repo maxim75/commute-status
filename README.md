@@ -52,13 +52,25 @@ Code layout: `app.py` (menu bar), `tfnsw.py` (MCP calls), `travel.py`
 
 ### Running with uvx or as an installed tool
 
+No checkout needed; uvx fetches the code (and Python 3.15 if missing) from GitHub:
+
 ```bash
-uvx --from /Users/maksym/code/commute-status commute-status
+uvx --from git+https://github.com/maxim75/commute-status commute-status
 ```
 
-or `uv tool install /Users/maksym/code/commute-status`, then `commute-status`.
+or install it once with
+`uv tool install git+https://github.com/maxim75/commute-status`, then run
+`commute-status`. From a local checkout, use its path instead of the `git+` URL.
+
 Run that way, the code lives in uv's cache, so put your settings in
-`~/.config/commute-status/.env` (or `$XDG_CONFIG_HOME/commute-status/.env`).
+`~/.config/commute-status/.env` (or `$XDG_CONFIG_HOME/commute-status/.env`):
+
+```bash
+mkdir -p ~/.config/commute-status && echo 'TFNSW_API_KEY=your-key' > ~/.config/commute-status/.env
+```
+
+To pick up new commits, add `--refresh` to the uvx command, or run
+`uv tool upgrade commute-status` for the installed tool.
 Settings are read in this order, first wins: environment variables, `.env` in
 the current folder, `.env` in the project folder, `~/.config/commute-status/.env`.
 uvx rebuilds automatically when files under `src/` change (see `cache-keys` in
