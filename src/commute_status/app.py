@@ -346,7 +346,7 @@ class CommuteApp(rumps.App):
         if mins == 0:
             self._set_title("🚆 now", "🚆 now", "now")
         else:
-            self._set_title(f"🚆 {mins} min", f"🚆 {mins}m", f"{mins}m")
+            self._set_title(f"🚆 {mins}m", f"🚆 {mins}m", f"{mins}m")
 
     def _item_hidden(self) -> bool:
         """True if the status item is behind the notch or not placed at all."""
@@ -455,7 +455,7 @@ class CommuteApp(rumps.App):
             kind, station = trip.where()
             pie = trip.progress()  # ◔ ◑ ◕ on the way to the next station, GPS only
             self._set_title(
-                f"🚆 {mins} min · {pie or kind} {station}" if station else f"🚆 {mins} min",
+                f"🚆 {mins}m · {pie or kind} {station}" if station else f"🚆 {mins}m",
                 f"🚆 {mins}m · {pie + ' ' if pie else ''}{station}" if station else f"🚆 {mins}m",
                 f"{mins}m",
             )

@@ -29,7 +29,7 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 - **Direction by time of day:** Engadine → Town Hall until 14:00, then
   Town Hall → Engadine until midnight (`COMMUTE_RETURN_AFTER`, empty to
   disable). A train you are following keeps its direction across the switch.
-- **Wait mode** (default): `🚆 11 min` counts down to the next train. The
+- **Wait mode** (default): `🚆 11m` counts down to the next train. The
   dropdown lists trains that already left but haven't reached Town Hall yet
   (with their arrival time), then the next departures, each with where the
   train is now (`at Heathcote`, or `◑ Sydenham` when about halfway there from
@@ -40,7 +40,7 @@ Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
   destination, and cached in `~/.cache/commute-status/line.json`.
 - **Pick a train**: click a departure in the dropdown. Until it leaves, the
   countdown follows that train.
-- **Travelling mode** (from departure): `🚆 23 min · ◑ Sutherland` shows
+- **Travelling mode** (from departure): `🚆 23m · ◑ Sutherland` shows
   minutes to the destination and the next station (or `at Sutherland` while
   stopped). The pie shows roughly how far the train is from the previous stop
   (◔ ◑ ◕), handy on long express runs. Position comes from the train's GPS in
@@ -83,7 +83,7 @@ uvx rebuilds automatically when files under `src/` change (see `cache-keys` in
 
 When the menu bar is full, macOS hides new items behind the notch without
 saying so. The app checks where its item ended up: while hidden it switches to
-shorter titles (`🚆 7 min` → `🚆 7m` → `7m`), and if even that doesn't fit it
+shorter titles (`🚆 7m · next Loftus` → `🚆 7m · Loftus` → `7m`), and if even that doesn't fit it
 shows a notification once. To make room, hold ⌘ and drag other icons out of the
 menu bar, or ⌘-drag the 🚆 item further right; that position is remembered
 across restarts. Set `COMMUTE_TITLE=full|compact|minimal` to fix the title
