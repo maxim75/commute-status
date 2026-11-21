@@ -8,6 +8,9 @@ Click a departure in the dropdown to pick that train. Until it leaves, the
 countdown follows it; once it departs the app switches to travelling mode:
 minutes to the destination and the next station. It goes back to wait mode a
 couple of minutes after arrival, or when you choose "Stop travelling".
+
+Nothing is requested from TfNSW until you choose "Activate" in the dropdown;
+the app switches itself off again after COMMUTE_ACTIVE_FOR minutes (1 hour).
 """
 
 from __future__ import annotations
@@ -35,6 +38,15 @@ AUTOSAVE_NAME = "commute-status"  # macOS remembers a ⌘-dragged position under
 CHANGE_STATIONS = "Change stations…"
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"  # shown in place of 🚆 while data is being requested
 SPIN_EVERY = 0.15  # seconds per frame
+ACTIVE_ITEM = "active"  # menu key of the Activate / Deactivate item
+REFRESH = "Refresh now"
+FIXED_ITEMS = 3  # active toggle, refresh, separator; the rest is redrawn
+
+
+def _duration(minutes: int) -> str:
+    """60 -> '1 h', 90 -> '1 h 30 min', 45 -> '45 min'."""
+    h, m = divmod(minutes, 60)
+    return " ".join(p for p in (f"{h} h" if h else "", f"{m} min" if m else "") if p)
 
 
 def _notify(title: str, message: str) -> None:
@@ -118,8 +130,12 @@ class CommuteApp(rumps.App):
         self._requests = 0  # requests in flight, for the spinner; several can overlap
         self._spin = 0  # spinner frame
         self._title_parts = ("🚆 …", "🚆 …", "…")
+        # Requests to TfNSW are made only while active, until this time.
+        self.active_until: datetime | None = None
+        self._active_item = rumps.MenuItem(ACTIVE_ITEM, callback=self.toggle_active)
         self.menu = [
-            rumps.MenuItem("Refresh now", callback=lambda _: self.fetch_now()),
+            self._active_item,
+            rumps.MenuItem(REFRESH, callback=lambda _: self.fetch_now()),
             None,
             rumps.MenuItem(CHANGE_STATIONS, callback=self.change_stations),
         ]
@@ -132,8 +148,11 @@ class CommuteApp(rumps.App):
 
     # --- fetching (background thread) -------------------------------------
 
+    def active(self, now: datetime | None = None) -> bool:
+        return self.active_until is not None and (now or datetime.now(SYDNEY)) < self.active_until
+
     def fetch_now(self) -> None:
-        if self._fetching:
+        if self._fetching or not self.active():
             return
         self._fetching = True
         self.last_fetch = datetime.now(SYDNEY)
@@ -161,7 +180,8 @@ class CommuteApp(rumps.App):
             errors.append(str(exc) or type(exc).__name__)
         finally:
             with self._lock:
-                self.errors = errors
+                if self.active():
+                    self.errors = errors
             self._fetching = False
             self._request_done()
 
@@ -198,7 +218,8 @@ class CommuteApp(rumps.App):
         if direction.key in self.lines and vehicles:
             self._place(board, vehicles, datetime.now(SYDNEY))
         with self._lock:
-            self.board = board
+            if self.active():  # not switched off while this was in flight
+                self.board = board
 
     async def _positions_inputs(self, s, direction: config.Direction, home: str, dest: str) -> list[dict]:
         if direction.key not in self.lines:
@@ -260,6 +281,24 @@ class CommuteApp(rumps.App):
 
     # --- user actions -----------------------------------------------------
 
+    def activate(self) -> None:
+        """Start requesting data, for config.ACTIVE_FOR_MIN from now."""
+        self.active_until = datetime.now(SYDNEY) + timedelta(minutes=config.ACTIVE_FOR_MIN)
+        self.fetch_now()
+
+    def deactivate(self) -> None:
+        """Stop requesting data and forget what was shown; it would go stale."""
+        with self._lock:
+            self.active_until, self.trip, self.board, self.errors = None, None, None, []
+        self._fetching = False  # a fetch in flight is ignored when it lands
+
+    def toggle_active(self, _=None) -> None:
+        if self.active():
+            self.deactivate()
+        else:
+            self.activate()
+        self.redraw(None)
+
     def pick(self, dep: tfnsw.Departure, direction: config.Direction) -> None:
         trip = travel.Trip(
             route=dep.route,
@@ -275,6 +314,8 @@ class CommuteApp(rumps.App):
         )
         with self._lock:
             self.trip = trip
+        # Following a train is a fresh request for data: a full active period from now.
+        self.active_until = datetime.now(SYDNEY) + timedelta(minutes=config.ACTIVE_FOR_MIN)
         self._fetching = False  # a wait-mode fetch in flight must not block this one
         self.fetch_now()
         self.redraw(None)
@@ -418,18 +459,34 @@ class CommuteApp(rumps.App):
         if _ is not None:  # timer tick, not a redraw after a click
             self._check_visible()
         now = datetime.now(SYDNEY)
+        if self.active_until is not None and not self.active(now):
+            self.deactivate()  # time's up
+        active = self.active(now)
+        self._active_item.title = (
+            f"Deactivate (active until {self.active_until:%H:%M})"
+            if active
+            else f"Activate for {_duration(config.ACTIVE_FOR_MIN)}"
+        )
+        self.menu[REFRESH].set_callback((lambda _: self.fetch_now()) if active else None)
         with self._lock:
             trip, board, errors = self.trip, self.board, list(self.errors)
             if trip and trip.planned and now >= trip.arrival + END_AFTER_ARRIVAL:
                 self.trip, trip, self.board = None, None, None  # back to wait mode
-            items = self._trip_items(trip, now) if trip else self._wait_items(board, errors, now)
+            if not active:
+                items = self._inactive_items()
+            else:
+                items = self._trip_items(trip, now) if trip else self._wait_items(board, errors, now)
         items += [rumps.MenuItem(f"⚠︎ {e[:80]}") for e in errors]
 
-        for key in list(self.menu.keys())[2:]:
+        for key in list(self.menu.keys())[FIXED_ITEMS:]:
             if key not in (CHANGE_STATIONS, "Quit"):
                 del self.menu[key]
         for item in items:
             self.menu.insert_before(CHANGE_STATIONS, item)
+
+    def _inactive_items(self) -> list[rumps.MenuItem]:
+        self._set_title("🚆 off", "🚆 off", "off")
+        return [rumps.MenuItem("Not requesting train data until activated")]
 
     def _wait_items(self, board: Board | None, errors: list[str], now: datetime) -> list[rumps.MenuItem]:
         upcoming = [r for r in board.rows if r.time >= now] if board else []
@@ -535,7 +592,7 @@ def run() -> None:
         NSRunLoop.currentRunLoop().addTimer_forMode_(timer, NSRunLoopCommonModes)
         app._spin_timer = timer  # keep a reference
 
-    app.fetch_now()
+    app.redraw(None)  # starts inactive: show it, request nothing
     app.run()
 
 

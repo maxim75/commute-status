@@ -47,6 +47,18 @@ UPCOMING_COUNT = 6  # departures to list
 
 TITLE_STYLE = os.environ.get("COMMUTE_TITLE", "auto")  # auto | full | compact | minimal
 
+
+def _minutes_setting(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, default)))
+    except ValueError:
+        return default
+
+
+# Nothing is requested from TfNSW until you activate the app from its menu;
+# it switches itself off again after this many minutes.
+ACTIVE_FOR_MIN = _minutes_setting("COMMUTE_ACTIVE_FOR", 60)
+
 WAIT_FETCH_EVERY = 60  # seconds between server calls while waiting
 TRAVEL_FETCH_EVERY = 30  # ... and while on a train
 SYDNEY = ZoneInfo("Australia/Sydney")

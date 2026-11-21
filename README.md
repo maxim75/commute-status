@@ -16,7 +16,16 @@ uv run commute-status
 
 Optional settings, in `.env` or the environment: `COMMUTE_STATION` (default
 `Engadine Station`), `COMMUTE_TOWARDS` (default `Town Hall`),
-`COMMUTE_RETURN_AFTER` (default `14:00`), `TFNSW_MCP_URL`.
+`COMMUTE_RETURN_AFTER` (default `14:00`), `COMMUTE_ACTIVE_FOR` (default `60`,
+minutes), `TFNSW_MCP_URL`.
+
+### Active mode
+
+The app starts switched off (`🚆 off`) and requests nothing from TfNSW. Choose
+**Activate for 1 h** in the dropdown to start fetching; it switches itself off
+again after `COMMUTE_ACTIVE_FOR` minutes, or earlier via **Deactivate**.
+Clicking a train to follow it restarts the hour. Checking new stations in
+**Change stations…** asks TfNSW once even while off.
 
 
 ### Wait and travelling modes
